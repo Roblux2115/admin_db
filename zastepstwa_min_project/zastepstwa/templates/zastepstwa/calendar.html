@@ -1,0 +1,197 @@
+{% extends 'zastepstwa/base.html' %}
+{% block content %}
+<h2>Kalendarz zajęć</h2>
+
+<div class="row" style="margin-bottom: 8px;">
+  <label>Wykładowca:</label>
+  <select id="lecturerSelect" class="btn">
+    <option value="">— Wszyscy —</option>
+    {% for l in lecturers %}
+      <option value="{{ l.id }}" {% if selected_id == l.id %}selected{% endif %}>
+        {{ l.first_name }} {{ l.last_name }}
+      </option>
+    {% endfor %}
+  </select>
+
+  <span class="notice">Kliknij zajęcia w kalendarzu, aby zobaczyć pełny opis lub dodać zastępstwo.</span>
+</div>
+
+<div id='calendar'></div>
+
+<style>
+  /* Łamanie linii w tytułach eventów */
+  .fc-event-title, .fc-event-title-container { white-space: pre-line; }
+  /* Drobniejszy font dla dłuższych tytułów */
+  .fc-timegrid-event .fc-event-main { line-height: 1.2; }
+
+  /* Popover */
+  #evt-pop {
+    position: fixed;
+    z-index: 9999;
+    max-width: 380px;
+    background: #111827;
+    color: #fff;
+    padding: 10px 12px;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.25);
+    display: none;
+    white-space: pre-line;
+  }
+  #evt-pop .actions { display:flex; gap:8px; justify-content:flex-end; margin-top:8px; }
+  #evt-pop .close-x { cursor:pointer; margin-left:auto; opacity:.8; }
+</style>
+<div id="evt-pop"></div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const calendarEl = document.getElementById('calendar');
+  const selectEl = document.getElementById('lecturerSelect');
+
+  // Popover
+  const pop = document.getElementById('evt-pop');
+  let popCloser = null; // aktualny listener zamykania
+
+  function placePopoverNearRect(rect) {
+    const margin = 12;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    let left = rect.right + margin;
+    let top  = rect.top + margin;
+    const popW = Math.min(380, vw * 0.9);
+    pop.style.maxWidth = popW + 'px';
+    // ustaw wstępnie, żeby mieć scrollHeight:
+    pop.style.left = left + 'px';
+    pop.style.top  = top + 'px';
+    pop.style.display = 'block';
+    // skoryguj jeśli wychodzi poza ekran
+    const bb = pop.getBoundingClientRect();
+    if (bb.right > vw - margin) left = Math.max(margin, vw - margin - bb.width);
+    if (bb.bottom > vh - margin) top  = Math.max(margin, vh - margin - bb.height);
+    pop.style.left = left + 'px';
+    pop.style.top  = top + 'px';
+  }
+
+  function showPopoverForEvent(fullText, sessionId, anchorEl) {
+    // treść + przycisk
+    pop.innerHTML = `
+      <div style="display:flex; gap:8px; align-items:center;">
+        <div style="font-weight:600">Szczegóły</div>
+        <div class="close-x" id="popClose" title="Zamknij" style="margin-left:auto;cursor:pointer;opacity:.8">✕</div>
+      </div>
+      <div style="margin-top:6px; white-space:pre-line;">${fullText.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+      <div class="actions" style="display:flex; gap:8px; justify-content:flex-end; margin-top:8px;">
+        <a class="btn" href="{% url 'zastepstwa:substitution_new' %}?session_id=${sessionId}">Dodaj zastępstwo</a>
+      </div>
+    `;
+    placePopoverNearRect(anchorEl.getBoundingClientRect());
+
+    // zamykanie: klik poza + Esc + resize/scroll
+    if (popCloser) {
+      document.removeEventListener('click', popCloser, true);
+      window.removeEventListener('keydown', popCloser, true);
+      window.removeEventListener('resize', popCloser, true);
+      window.removeEventListener('scroll', popCloser, true);
+    }
+    popCloser = function(e) {
+      // klik w X
+      if (e && e.type === 'click' && e.target && e.target.id === 'popClose') {
+        pop.style.display = 'none'; return;
+      }
+      // klik poza
+      if (e && e.type === 'click' && !pop.contains(e.target)) {
+        pop.style.display = 'none'; 
+        document.removeEventListener('click', popCloser, true);
+        window.removeEventListener('keydown', popCloser, true);
+        window.removeEventListener('resize', popCloser, true);
+        window.removeEventListener('scroll', popCloser, true);
+      }
+      // Esc
+      if (e && e.type === 'keydown' && e.key === 'Escape') {
+        pop.style.display = 'none';
+      }
+      // zmiana rozmiaru/przewinięcie -> schowaj (prościej niż repozycjonować)
+      if (e && (e.type === 'resize' || e.type === 'scroll')) {
+        pop.style.display = 'none';
+      }
+    };
+    // UWAGA: używamy capture=true, żeby klik w tło na pewno doszedł
+    document.addEventListener('click', popCloser, true);
+    window.addEventListener('keydown', popCloser, true);
+    window.addEventListener('resize', popCloser, true);
+    window.addEventListener('scroll', popCloser, true);
+
+    // przycisk X
+    const x = document.getElementById('popClose');
+    if (x) x.addEventListener('click', (ev) => { ev.stopPropagation(); pop.style.display = 'none'; });
+  }
+
+  const calendar = new FullCalendar.Calendar(calendarEl, {
+    initialView: 'timeGridWeek',
+    slotMinTime: '07:00:00',
+    slotMaxTime: '20:00:00',
+    height: 'auto',
+    nowIndicator: true,
+    headerToolbar: {
+      left: 'prev,next today',
+      center: 'title',
+      right: 'timeGridWeek,timeGridDay,dayGridMonth'
+    },
+    eventClick: function(info) {
+      // zablokuj domyślną akcję i bąbelkowanie (niektóre elementy wewnątrz eventu to <a>)
+      info.jsEvent.preventDefault();
+      info.jsEvent.stopPropagation();
+
+      // pokaż popover pewnie, zakotwiczony do elementu eventu:
+      showPopoverForEvent(info.event.title, info.event.id, info.el);
+    },
+    eventDidMount: function(info){
+      // Ładne \n oraz tooltip z pełnym tytułem
+      info.el.setAttribute('title', info.event.title.replace(/\n/g, ' • '));
+      const titleEl = info.el.querySelector('.fc-event-title');
+      if (titleEl) titleEl.style.whiteSpace = 'pre-line';
+      // Na wszelki wypadek: własny fallback-click
+      info.el.addEventListener('click', (ev) => {
+        ev.preventDefault(); ev.stopPropagation();
+        showPopoverForEvent(info.event.title, info.event.id, info.el);
+      });
+    },
+    events: function(fetchInfo, successCallback, failureCallback) {
+      const params = new URLSearchParams();
+      // zakres z widoku (ważne!)
+      params.set('start', fetchInfo.startStr);
+      params.set('end', fetchInfo.endStr);
+      // filtr prowadzącego tylko gdy wybrany
+      const val = selectEl.value;
+      if (val) params.set('lecturer_id', val);
+
+      const base = "{% url 'zastepstwa:api_events' %}";
+      const url = params.toString() ? `${base}?${params.toString()}` : base;
+
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          // Akceptuj tablicę albo obiekt {events:[...]} / {items:[...]}:
+          const events = Array.isArray(data) ? data : (data.events || data.items || []);
+          successCallback(events);
+        })
+        .catch(err => {
+          console.error('Błąd pobierania wydarzeń:', err);
+          failureCallback(err);
+        });
+    }
+  });
+  calendar.render();
+
+  selectEl.addEventListener('change', () => {
+    // zaktualizuj URL strony (bez przeładowania) i odśwież dane
+    const params = new URLSearchParams(window.location.search);
+    if (selectEl.value) params.set('lecturer_id', selectEl.value);
+    else params.delete('lecturer_id');
+    const newUrl = `{% url 'zastepstwa:calendar' %}` + (params.toString() ? `?${params}` : '');
+    window.history.replaceState({}, "", newUrl);
+
+    calendar.refetchEvents();
+  });
+});
+</script>
+
+{% endblock %}

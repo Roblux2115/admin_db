@@ -1,0 +1,27 @@
+{% extends 'zastepstwa/base.html' %}
+{% block content %}
+<h2>{% if is_new %}Dodaj wykładowcę{% else %}Edytuj wykładowcę{% endif %}</h2>
+
+<form method="post" style="max-width:520px;">
+  {% csrf_token %}
+
+  <div class="row" style="flex-direction:column; gap:10px;">
+    <label>Imię<br/>{{ form.first_name }}</label>
+    <label>Nazwisko<br/>{{ form.last_name }}</label>
+    <label>E-mail<br/>{{ form.email }}</label>
+
+    <div>
+      <div style="font-weight:600; margin-bottom:6px;">Przedmioty (zaznacz które prowadzi)</div>
+      {{ form.subjects }}
+    </div>
+
+    <label>Limit zastępstw / tydz.<br/>{{ form.max_substitutions_per_week }}</label>
+    <label>Limit godzin / tydz.<br/>{{ form.max_hours_per_week }}</label>
+
+    <div class="row" style="gap:8px;">
+      <button class="btn" type="submit">Zapisz</button>
+      <a class="btn" href="{% url 'zastepstwa:lecturers_list' %}">Anuluj</a>
+    </div>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,203 @@
+{% extends 'zastepstwa/base.html' %}
+{% block content %}
+
+<h2>Statystyki zastępstw</h2>
+
+<style>
+  /* ——— UI ——— */
+  .toolbar { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-bottom:12px; }
+  .toolbar label { font-weight:600; color:#374151; }
+  .toolbar .ctl { display:flex; gap:8px; align-items:center; }
+  .muted { background:#f9fafb; border:1px solid #e5e7eb; padding:8px 12px; border-radius:8px; color:#374151; }
+
+  /* ——— WYKRES: stały, rozsądny rozmiar ——— */
+  .chart-box { height: 360px; max-height: 60vh; margin: 14px 0; }
+  #statsChart { width: 100% !important; height: 100% !important; }
+
+  /* ——— Tabela ——— */
+  table.full { width:100%; border-collapse: collapse; margin-top: 10px; }
+  table.full th, table.full td { padding:8px 10px; border-bottom:1px solid #e5e7eb; text-align:left; }
+  table.full th { color:#374151; }
+  table.full td.num { text-align:right; width:110px; }
+</style>
+
+<div class="toolbar">
+  <div class="ctl">
+    <label for="periodSel">Okres:</label>
+    <select id="periodSel" class="btn">
+      <option value="week">Bieżący tydzień</option>
+      <option value="month">Bieżący miesiąc</option>
+      <option value="all">Cały okres</option>
+      <option value="custom">Własny zakres</option>
+    </select>
+    <input id="startInput" type="date" class="btn" style="display:none">
+    <span id="dash" style="display:none">–</span>
+    <input id="endInput" type="date" class="btn" style="display:none">
+  </div>
+
+  <div class="ctl">
+    <label for="scopeSel">Zakres danych:</label>
+    <select id="scopeSel" class="btn">
+      <option value="subs">Zastępstwa</option>
+      <option value="all">Wszystkie zajęcia</option>
+    </select>
+  </div>
+
+  <div class="ctl">
+    <label for="metricSel">Metryka:</label>
+    <select id="metricSel" class="btn">
+      <option value="hours">Godziny</option>
+      <option value="subs">Zastępstwa</option>
+    </select>
+  </div>
+
+  <div class="ctl">
+    <label for="dirSel">Sortowanie:</label>
+    <select id="dirSel" class="btn">
+      <option value="desc">Malejąco</option>
+      <option value="asc">Rosnąco</option>
+    </select>
+  </div>
+</div>
+
+<div class="muted" id="periodLabel">Zakres: {{ period_label }}</div>
+
+<div class="chart-box">
+  <canvas id="statsChart"></canvas>
+</div>
+
+<table class="full">
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Wykładowca</th>
+      <th class="num">Zastępstwa</th>
+      <th class="num">Godziny</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in ranking %}
+      <tr>
+        <td>{{ forloop.counter }}</td>
+        <td>{{ row.name }}</td>
+        <td class="num">{{ row.subs|default:0 }}</td>
+        <td class="num">{{ row.hours|floatformat:2 }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="4" class="muted">Brak danych dla wybranego zakresu.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<!-- Dane z serwera jako JSON (nie jest analizowane przez linter JS) -->
+<script id="statsPayload" type="application/json">
+{
+  "labels": {{ labels_json|default:"[]"|safe }},
+  "hours": {{ hours_json|default:"[]"|safe }},
+  "subs": {{ subs_json|default:"[]"|safe }},
+  "selected_period": "{{ selected_period|default:'month' }}",
+  "metric": "{{ metric|default:'hours' }}",
+  "direction": "{{ direction|default:'desc' }}",
+  "period_label": "{{ period_label|escapejs }}",
+  "start_val": "{{ start_val|default:'' }}",
+  "end_val": "{{ end_val|default:'' }}"
+}
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+  // ——— pobierz payload z <script type="application/json"> ———
+  const payloadEl = document.getElementById('statsPayload');
+  const payload = JSON.parse(payloadEl.textContent || '{}');
+
+  const labels      = Array.isArray(payload.labels) ? payload.labels : [];
+  const valuesHours = Array.isArray(payload.hours)  ? payload.hours  : [];
+  const valuesSubs  = Array.isArray(payload.subs)   ? payload.subs   : [];
+
+  // UI elementy
+  const periodSel = document.getElementById('periodSel');
+  const scopeSel  = document.getElementById('scopeSel');
+  const metricSel = document.getElementById('metricSel');
+  const dirSel    = document.getElementById('dirSel');
+  const startI    = document.getElementById('startInput');
+  const endI      = document.getElementById('endInput');
+  const dash      = document.getElementById('dash');
+
+  // startowe wartości z payloadu + z URL (scope)
+  const urlParams = new URLSearchParams(window.location.search);
+  const scope     = urlParams.get('scope') || 'subs';
+
+  periodSel.value = ['week','month','all','custom'].includes(payload.selected_period) ? payload.selected_period : 'month';
+  scopeSel.value  = ['subs','all'].includes(scope) ? scope : 'subs';
+  metricSel.value = ['hours','subs'].includes(payload.metric) ? payload.metric : 'hours';
+  dirSel.value    = ['asc','desc'].includes(payload.direction) ? payload.direction : 'desc';
+  if (payload.start_val) startI.value = payload.start_val;
+  if (payload.end_val)   endI.value   = payload.end_val;
+
+  // pokaż/ukryj date-pickery
+  function syncDateInputs() {
+    const custom = periodSel.value === 'custom';
+    startI.style.display = custom ? '' : 'none';
+    endI.style.display   = custom ? '' : 'none';
+    dash.style.display   = custom ? '' : 'none';
+  }
+  syncDateInputs();
+
+  // metryka "Zastępstwa" ma sens tylko dla zakresu "Zastępstwa"
+  function syncMetricForScope() {
+    const optSubs = Array.from(metricSel.options).find(o => o.value === 'subs');
+    if (scopeSel.value === 'all') {
+      if (optSubs) optSubs.disabled = true;
+      if (metricSel.value === 'subs') metricSel.value = 'hours';
+    } else {
+      if (optSubs) optSubs.disabled = false;
+    }
+  }
+  syncMetricForScope();
+
+  // ——— Wykres ———
+  const ctx = document.getElementById('statsChart').getContext('2d');
+  let chart;
+  function renderChart() {
+    const useHours = metricSel.value === 'hours';
+    const data  = useHours ? valuesHours : valuesSubs;
+    const label = useHours ? 'Godziny zastępstw' : 'Liczba zastępstw';
+    if (chart) chart.destroy();
+    chart = new Chart(ctx, {
+      type: 'bar',
+      data: { labels, datasets: [{ label, data }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+        plugins: { legend: { display: true } }
+      }
+    });
+  }
+  renderChart();
+
+  // ——— przeładowanie z parametrami ———
+  function navigate() {
+    const p = new URLSearchParams();
+    p.set('period', periodSel.value);
+    p.set('scope',  scopeSel.value);
+    p.set('metric', metricSel.value);
+    p.set('dir',    dirSel.value);
+    if (periodSel.value === 'custom') {
+      if (startI.value) p.set('start', startI.value);
+      if (endI.value)   p.set('end',   endI.value);
+    }
+    const base = "{% url 'zastepstwa:stats' %}";
+    window.location.href = base + "?" + p.toString();
+  }
+
+  periodSel.addEventListener('change', () => { syncDateInputs(); navigate(); });
+  scopeSel .addEventListener('change', () => { syncMetricForScope(); navigate(); });
+  metricSel.addEventListener('change', () => { renderChart(); navigate(); });
+  dirSel   .addEventListener('change', navigate);
+  startI   .addEventListener('change', navigate);
+  endI     .addEventListener('change', navigate);
+})();
+</script>
+
+{% endblock %}

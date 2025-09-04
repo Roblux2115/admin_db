@@ -1,0 +1,15 @@
+{% extends 'zastepstwa/base.html' %}
+{% block content %}
+<h2>{% if is_new %}Dodaj przedmiot{% else %}Edytuj przedmiot{% endif %}</h2>
+
+<form method="post" class="row" style="flex-direction:column; gap:12px; max-width:420px;">
+  {% csrf_token %}
+  <label>Kod<br/>{{ form.code }}</label>
+  <label>Nazwa<br/>{{ form.name }}</label>
+
+  <div style="display:flex; gap:8px;">
+    <button class="btn" type="submit">Zapisz</button>
+    <a class="btn" href="{% url 'zastepstwa:subjects_list' %}">Anuluj</a>
+  </div>
+</form>
+{% endblock %}

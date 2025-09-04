@@ -1,0 +1,139 @@
+{% extends 'zastepstwa/base.html' %}
+{% block content %}
+<h2>Dodaj zastępstwo</h2>
+
+<div class="notice" style="margin-bottom:12px;">
+  <strong>Zajęcia:</strong> {{ session.subject.name }} ({{ session.subject.code }}) |
+  {{ session.lecturer.first_name }} {{ session.lecturer.last_name }}<br/>
+  <strong>Termin:</strong> {{ session.start }} – {{ session.end }}
+</div>
+
+<label>Wybierz wykładowcę zastępującego:</label>
+<select id="lecturerSelect" class="btn">
+  <option value="">— Brak (wyczyść zastępstwo) —</option>
+  {% for l in lecturers %}
+    <option value="{{ l.id }}">{{ l.first_name }} {{ l.last_name }}</option>
+  {% endfor %}
+</select>
+
+<div id="evalBox" class="notice" style="margin-top:10px; display:none; white-space:pre-line;"></div>
+
+<div style="margin-top:12px;">
+  <button id="saveBtn" class="btn" data-session-id="{{ session.id }}">Zapisz</button>
+  <a class="btn" href="{% url 'zastepstwa:calendar' %}">Wróć</a>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const btn = document.getElementById('saveBtn');
+  const select = document.getElementById('lecturerSelect');
+  const box = document.getElementById('evalBox');
+  const sessionId = Number(btn.dataset.sessionId);
+
+  // --- CSRF helper ---
+  function getCookie(name) {
+    const m = document.cookie.match('(?:^|; )' + name.replace(/([$?*|{}\[\]\\\/\+^])/g,'\\$1') + '=([^;]*)');
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  async function loadPreview() {
+    const lid = select.value;
+
+    // zawsze pokazuj box (tylko zmieniaj styl/treść)
+    box.style.display = 'block';
+
+    if (!lid) {
+      box.style.background = '#f3f4f6';
+      box.style.border = '1px solid #d1d5db';
+      box.style.color = '#374151';
+      box.textContent = 'Brak zastępstwa – żadne kryteria nie są sprawdzane.';
+      return;
+    }
+
+    try {
+      const url = "{% url 'zastepstwa:api_substitution_preview' %}" + `?session_id=${sessionId}&lecturer_id=${encodeURIComponent(lid)}`;
+      const res = await fetch(url, { credentials: 'same-origin' });
+      const d = await res.json();
+
+      const lines = [];
+      // 1) Lista przedmiotów kandydata – na początku
+      lines.push(`Przedmioty kandydata: ${d.subjects && d.subjects.length ? d.subjects.join(', ') : '—'}`);
+      // 2) Czy może prowadzić te konkretne zajęcia
+      lines.push(`Czy prowadzi ten przedmiot: ${d.can_teach ? 'Tak' : 'Nie'}`);
+      // 3) Kolizje
+      lines.push(`Czy wolny w tym terminie: ${d.is_free ? 'Tak' : 'Nie'}`);
+
+      // 4) Limity – opis bez duplikowania nazw zmiennych
+      const subsCaption = (d.subs_limit && d.subs_limit > 0)
+        ? `${d.subs_week_after}/${d.subs_limit}`
+        : `${d.subs_week_after} (brak limitu)`;
+      lines.push(`Zastępstwa w tygodniu po dodaniu: ${subsCaption} → ${d.subs_ok ? 'OK' : 'PRZEKROCZY'}`);
+
+      const hoursCaption = (d.hours_limit && d.hours_limit > 0)
+        ? `${d.hours_week_after}/${d.hours_limit} h`
+        : `${d.hours_week_after} h (brak limitu)`;
+      lines.push(`Godziny w tygodniu po dodaniu: ${hoursCaption} → ${d.hours_ok ? 'OK' : 'PRZEKROCZY'}`);
+
+      // kolorystyka boxa
+      if (d.ok) {
+        box.style.background = '#e8f8ef';
+        box.style.border = '1px solid #10b981';
+        box.style.color = '#065f46';
+      } else {
+        box.style.background = '#fee2e2';
+        box.style.border = '1px solid #ef4444';
+        box.style.color = '#7f1d1d';
+      }
+      box.textContent = lines.join('\n');
+    } catch (e) {
+      box.style.background = '#fee2e2';
+      box.style.border = '1px solid #ef4444';
+      box.style.color = '#7f1d1d';
+      box.textContent = 'Nie udało się pobrać oceny kandydata.';
+      console.error(e);
+    }
+  }
+
+  select.addEventListener('change', loadPreview);
+  loadPreview();
+
+  // Zapis / czyszczenie zastępstwa
+  btn.addEventListener('click', async () => {
+    const lecturerIdStr = select.value; // "" = Brak
+    const payload = {
+      session_id: sessionId,
+      lecturer_id: lecturerIdStr ? Number(lecturerIdStr) : ""
+    };
+
+    try {
+      const res = await fetch("{% url 'zastepstwa:api_substitutions' %}", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": getCookie('csrftoken'),
+          "X-Requested-With": "XMLHttpRequest"
+        },
+        credentials: "same-origin",
+        body: JSON.stringify(payload)
+      });
+
+      let data = {};
+      try { data = await res.json(); } catch (_) {}
+
+      if (res.ok && data.ok) {
+        alert("Zapisano.");
+        window.location.href = "{% url 'zastepstwa:calendar' %}";
+      } else if (res.ok && data.cleared) {
+        alert("Zastępstwo usunięte.");
+        window.location.href = "{% url 'zastepstwa:calendar' %}";
+      } else {
+        alert("Nie można zapisać: " + (data.reason || res.statusText));
+      }
+    } catch (err) {
+      alert("Błąd sieci przy zapisie.");
+      console.error(err);
+    }
+  });
+});
+</script>
+{% endblock %}

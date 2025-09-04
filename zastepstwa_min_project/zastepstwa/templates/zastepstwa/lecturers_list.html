@@ -1,0 +1,36 @@
+{% extends 'zastepstwa/base.html' %}
+{% block content %}
+<h2>Wykładowcy</h2>
+
+<p><a class="btn" href="{% url 'zastepstwa:lecturer_new' %}">+ Dodaj wykładowcę</a></p>
+
+<table class="full">
+  <thead>
+    <tr>
+      <th>Imię i nazwisko</th>
+      <th>E-mail</th>
+      <th>Przedmioty</th>
+      <th style="width:140px;"></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for l in lecturers %}
+      <tr>
+        <td>{{ l.first_name }} {{ l.last_name }}</td>
+        <td>{{ l.email }}</td>
+        <td>
+          {% for s in l.subjects.all %}
+            <span style="display:inline-block; margin:0 6px 6px 0; padding:2px 6px; border:1px solid #e5e7eb; border-radius:6px;">
+              {{ s.code }}
+            </span>
+          {% empty %}—{% endfor %}
+        </td>
+        <td>
+          <a class="btn" href="{% url 'zastepstwa:lecturer_edit' l.id %}">Edytuj</a>
+          <a class="btn" href="{% url 'zastepstwa:lecturer_delete' l.id %}">Usuń</a>
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

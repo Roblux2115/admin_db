@@ -1,0 +1,18 @@
+{% extends 'zastepstwa/base.html' %}
+{% block content %}
+<h2>Dodaj zajęcia</h2>
+
+<form method="post">
+  {% csrf_token %}
+  <p><label>Przedmiot</label><br/>{{ form.subject }}</p>
+  <p><label>Wykładowca</label><br/>{{ form.lecturer }}</p>
+  <p><label>Start</label><br/>{{ form.start }}</p>
+  <p><label>Koniec</label><br/>{{ form.end }}</p>
+  <p><label>{{ form.needs_substitution }} Potrzebuje zastępstwa</label></p>
+
+  <div style="margin-top:12px;">
+    <button class="btn" type="submit">Zapisz</button>
+    <a class="btn" href="{% url 'zastepstwa:calendar' %}">Anuluj</a>
+  </div>
+</form>
+{% endblock %}

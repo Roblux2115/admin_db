@@ -1,0 +1,10 @@
+{% extends 'zastepstwa/base.html' %}
+{% block content %}
+<h2>Potwierdź usunięcie</h2>
+<p>Czy na pewno chcesz usunąć {{ type }}: <strong>{{ object }}</strong>?</p>
+<form method="post">
+  {% csrf_token %}
+  <button class="btn" type="submit">Usuń</button>
+  <a class="btn" href="javascript:history.back()">Anuluj</a>
+</form>
+{% endblock %}
