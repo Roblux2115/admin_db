@@ -1,8 +1,48 @@
-def find_best_replacement(session: ClassSession) -> Lecturer | None:
-    """
-    Znajduje najlepszego kandydata na zastępstwo: dostępny, najmniej godzin przepracowanych.
-    Zwraca wykładowcę lub None.
-    """
+from django.shortcuts import render, redirect, get_object_or_404
+from django.http import JsonResponse, HttpResponseBadRequest
+from django.utils import timezone
+from django.db.models import Q, F, Count, Sum, DurationField, ExpressionWrapper
+from datetime import datetime, timedelta
+
+from .models import Lecturer, Subject, ClassSession, Substitution, LecturerUnavailability
+from .forms import SessionForm
+
+# -------------------- Pomocnicze --------------------
+def _hours_between(a, b):
+    return (b - a).total_seconds() / 3600.0
+
+def _week_bounds(dt):
+    local = timezone.localtime(dt)
+    week_start_date = local.date() - timedelta(days=local.weekday())
+    week_start = datetime.combine(week_start_date, datetime.min.time(), tzinfo=local.tzinfo)
+    week_end = week_start + timedelta(days=7)
+    return week_start, week_end
+
+def _overlaps(a_start, a_end, b_start, b_end):
+    return not (a_end <= b_start or b_end <= a_start)
+
+def _active_slots(lecturer):
+    own = ClassSession.objects.filter(
+        lecturer=lecturer
+    ).filter(
+        Q(substitution__isnull=True) | Q(substitution__substitute_lecturer=lecturer)
+    ).values_list("start", "end")
+
+    taken = ClassSession.objects.filter(
+        substitution__substitute_lecturer=lecturer
+    ).values_list("start", "end")
+
+    return list(own) + list(taken)
+
+def _has_unavailability(lect, start, end):
+    return LecturerUnavailability.objects.filter(
+        lecturer=lect,
+        start__lt=end,
+        end__gt=start,
+    ).exists()
+
+# -------------------- Algorytm wyboru najlepszego --------------------
+def find_best_replacement(session):
     candidates = Lecturer.objects.exclude(id=session.lecturer_id)
     week_start, week_end = _week_bounds(session.start)
 
@@ -12,21 +52,42 @@ def find_best_replacement(session: ClassSession) -> Lecturer | None:
     for lect in candidates:
         if not lect.subjects.filter(id=session.subject_id).exists():
             continue
-        # dostępność:
+
         if any(_overlaps(a, b, session.start, session.end) for a, b in _active_slots(lect)):
             continue
         if _has_unavailability(lect, session.start, session.end):
             continue
-        # sumuj godziny w tygodniu
+
         hours = 0.0
         for s_start, s_end in _active_slots(lect):
             if s_start < week_end and s_end > week_start:
                 overlap_start = max(s_start, week_start)
                 overlap_end = min(s_end, week_end)
                 hours += _hours_between(overlap_start, overlap_end)
-        # wybierz min
+
         if best is None or hours < best_hours:
             best = lect
             best_hours = hours
 
     return best
+
+# -------------------- Widok dodawania zajęć --------------------
+def session_create(request):
+    if request.method == "POST":
+        form = SessionForm(request.POST)
+        if form.is_valid():
+            obj = form.save()
+
+            # Automatyczne znalezienie zastępstwa (jeśli zaznaczono, że potrzeba)
+            if obj.needs_substitution:
+                best = find_best_replacement(obj)
+                if best:
+                    Substitution.objects.update_or_create(
+                        session=obj,
+                        defaults={"substitute_lecturer": best}
+                    )
+
+            return redirect("zastepstwa:calendar")
+    else:
+        form = SessionForm()
+    return render(request, "zastepstwa/session_form.html", {"form": form})
