@@ -1,0 +1,32 @@
+def find_best_replacement(session: ClassSession) -> Lecturer | None:
+    """
+    Znajduje najlepszego kandydata na zastępstwo: dostępny, najmniej godzin przepracowanych.
+    Zwraca wykładowcę lub None.
+    """
+    candidates = Lecturer.objects.exclude(id=session.lecturer_id)
+    week_start, week_end = _week_bounds(session.start)
+
+    best = None
+    best_hours = None
+
+    for lect in candidates:
+        if not lect.subjects.filter(id=session.subject_id).exists():
+            continue
+        # dostępność:
+        if any(_overlaps(a, b, session.start, session.end) for a, b in _active_slots(lect)):
+            continue
+        if _has_unavailability(lect, session.start, session.end):
+            continue
+        # sumuj godziny w tygodniu
+        hours = 0.0
+        for s_start, s_end in _active_slots(lect):
+            if s_start < week_end and s_end > week_start:
+                overlap_start = max(s_start, week_start)
+                overlap_end = min(s_end, week_end)
+                hours += _hours_between(overlap_start, overlap_end)
+        # wybierz min
+        if best is None or hours < best_hours:
+            best = lect
+            best_hours = hours
+
+    return best
